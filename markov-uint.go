@@ -62,7 +62,7 @@ type uintModel struct {
 	model map[uintType]map[uintType]uint8
 }
 
-func (u *uintModel) GetSize() uint64 {
+func (u *uintModel) Size() uint64 {
 	return u.size
 }
 

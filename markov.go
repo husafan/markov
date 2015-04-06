@@ -4,7 +4,7 @@ package markov
 // of data and recording how often one type appears after another.
 type Model interface {
 	AddData(interface{}) error
-	GetSize() uint64
+	Size() uint64
 }
 
 func NewUintModel() Model {
