@@ -1,4 +1,4 @@
-# wav
+# markov
 [![Build Status](https://travis-ci.org/husafan/markov.svg)](https://travis-ci.org/husafan/markov)
 ###
 A Go library for building Markov models.
