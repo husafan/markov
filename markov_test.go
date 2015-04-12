@@ -1,49 +1,52 @@
 package markov_test
 
 import (
-	"regexp"
+	"bytes"
+	"encoding/binary"
 	"testing"
 
 	. "github.com/husafan/markov"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestUintModelCanOnlyAcceptUintTypes(t *testing.T) {
-	model := NewUintModel()
-	assert.NotNil(t, model)
+func TestUint16State(t *testing.T) {
+	bytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(bytes, uint16(32))
 
-	var err error
-	var re *regexp.Regexp
-	err = model.AddData("Hello")
-	assert.NotNil(t, err)
-	re = regexp.MustCompile("type string")
-	assert.NotEqual(t, "", re.FindString(err.Error()))
-
-	err = model.AddData(1)
-	assert.NotNil(t, err)
-	re = regexp.MustCompile("type int")
-	assert.NotEqual(t, "", re.FindString(err.Error()))
+	state := Uint16State(32)
+	assert.Equal(t, "32", state.Value())
+	assert.Equal(t, uint64(2), state.Size())
+	assert.Equal(t, bytes, state.Bytes())
 }
 
-func TestUintModelSizeCalculations(t *testing.T) {
-	model := NewUintModel()
+func TestStringState(t *testing.T) {
+	hello := bytes.NewBufferString("hello").Bytes()
 
-	var err error
-	err = model.AddData(Uint16(32))
-	assert.Nil(t, err)
-	// The model should have a single entry from 0 to 32 with a count of 1.
-	// This means 1 byte for the 0, 2 bytes for the uint16 and 1 byte for
-	// the count of 1.
-	assert.Equal(t, uint64(4), model.Size())
+	state := StringState("hello")
+	assert.Equal(t, "hello", state.Value())
+	assert.Equal(t, uint64(5), state.Size())
+	assert.Equal(t, hello, state.Bytes())
+}
 
-	err = model.AddData(Uint16(32))
-	assert.Nil(t, err)
-	// Two new entries of size uint16 and a new count of size uint8 adds
-	// another 5 bytes to the size.
-	assert.Equal(t, uint64(9), model.Size())
+func TestNormalizingRowReturnsNotOkForNonValue(t *testing.T) {
+	row := NewNormalizingRow()
+	state := Uint16State(32)
+	value, ok := row.StateWeight(state)
+	assert.Equal(t, uint64(0), value)
+	assert.Equal(t, false, ok)
+}
 
-	err = model.AddData(Uint16(32))
-	assert.Nil(t, err)
-	// This entry simply increments the count, so no added size.
-	assert.Equal(t, uint64(9), model.Size())
+func TestNormalizingRowSize(t *testing.T) {
+	row := NewNormalizingRow()
+	assert.Equal(t, uint64(4), row.Size())
+
+	// A Uint16State has a size of 2 bytes. So after adding it to the row
+	// the new size should be 6.
+	uintState := Uint16State(32)
+	assert.Equal(t, uint64(6), row.AddState(uintState))
+
+	// The following StringState has 1 byte per character, so the new total
+	// size should be 6 + 5 = 11.
+	stringState := StringState("Hello")
+	assert.Equal(t, uint64(11), row.AddState(stringState))
 }
