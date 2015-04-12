@@ -3,6 +3,7 @@ package markov_test
 import (
 	"bytes"
 	"encoding/binary"
+	"regexp"
 	"testing"
 
 	. "github.com/husafan/markov"
@@ -89,6 +90,74 @@ func TestNormalizingRowWeighting(t *testing.T) {
 	assert.Equal(t, float64(2)/float64(5), row.StateWeight(state64))
 }
 
+func TestWalNormalizingRow(t *testing.T) {
+	row := NewNormalizingRow()
+	var state State
+	var err error
+	var re *regexp.Regexp
+	var seen1, seen2, seen3 State
+
+	re = regexp.MustCompile("between 0 and 1")
+	state, err = row.Walk(float64(-1))
+	assert.Nil(t, state)
+	assert.NotNil(t, err)
+	assert.NotEqual(t, "", re.FindString(err.Error()))
+	state, err = row.Walk(float64(2))
+	assert.Nil(t, state)
+	assert.NotNil(t, err)
+	assert.NotEqual(t, "", re.FindString(err.Error()))
+
+	re = regexp.MustCompile("no data")
+	state, err = row.Walk(float64(.5))
+	assert.Nil(t, state)
+	assert.NotNil(t, err)
+	assert.NotEqual(t, "", re.FindString(err.Error()))
+
+	// Because map iteration is randomized, which values correspond to which
+	// states is non-deterministic. Therefore, these tests can only confirm
+	// that a given spread of values will see all expected states.
+
+	// Confirm that with only a single state, all values correspond to that
+	// state.
+	state16 := Uint16State(16)
+	row.AddState(state16)
+	seen1, err = row.Walk(float64(0.1))
+	assert.Nil(t, err)
+	seen2, err = row.Walk(float64(0.5))
+	assert.Nil(t, err)
+	seen3, err = row.Walk(float64(0.9))
+	assert.Nil(t, err)
+	assert.Equal(t, seen1, seen2)
+	assert.Equal(t, seen1, seen3)
+	assert.Equal(t, seen2, seen3)
+
+	// Confirm that with two states, the space is divided in half.
+	state32 := Uint16State(32)
+	row.AddState(state32)
+	seen1, err = row.Walk(float64(0.1))
+	assert.Nil(t, err)
+	seen2, err = row.Walk(float64(0.5))
+	assert.Nil(t, err)
+	seen3, err = row.Walk(float64(0.9))
+	assert.Nil(t, err)
+	assert.Equal(t, seen1, seen2)
+	assert.NotEqual(t, seen1, seen3)
+	assert.NotEqual(t, seen2, seen3)
+
+	// Confirm that with three states, the space is divided into thirds.
+	state64 := Uint16State(64)
+	row.AddState(state64)
+	seen1, err = row.Walk(float64(0.1))
+	assert.Nil(t, err)
+	seen2, err = row.Walk(float64(0.5))
+	assert.Nil(t, err)
+	seen3, err = row.Walk(float64(0.9))
+	assert.Nil(t, err)
+	assert.NotEqual(t, seen1, seen2)
+	assert.NotEqual(t, seen1, seen3)
+	assert.NotEqual(t, seen2, seen3)
+}
+
 func TestModelSize(t *testing.T) {
 	state16 := Uint16State(16)
 	state32 := Uint16State(32)
@@ -120,4 +189,31 @@ func TestModelSize(t *testing.T) {
 	// state16 as a transition state means 2 more bytes for the key and 4
 	// more bytes for the counter.
 	assert.Equal(t, uint64(45), model.Size())
+}
+
+func TestSetCurrentModelState(t *testing.T) {
+	model := NewModel()
+	state16 := Uint16State(16)
+
+	var err error
+	err = model.SetCurrentState(state16)
+	assert.NotNil(t, err)
+	err = model.SetCurrentState(Start)
+	assert.NotNil(t, err)
+
+	// After adding state16, Start is a valid start state.
+	model.AddState(state16)
+	err = model.SetCurrentState(state16)
+	assert.NotNil(t, err)
+	err = model.SetCurrentState(Start)
+	assert.Nil(t, err)
+
+	// Because setting the start state to Start was successful, state16
+	// needs to be added twice before it is also a valid start state.
+	model.AddState(state16)
+	model.AddState(state16)
+	err = model.SetCurrentState(state16)
+	assert.Nil(t, err)
+	err = model.SetCurrentState(Start)
+	assert.Nil(t, err)
 }

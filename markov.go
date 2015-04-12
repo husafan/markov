@@ -1,7 +1,12 @@
 package markov
 
+import (
+	"errors"
+	"fmt"
+)
+
 // A special start state.
-var start State = StringState("start")
+var Start State = StringState("start")
 
 /**
  * The State interface interface must be implemented by all types of states
@@ -19,20 +24,27 @@ type State interface {
  * of state and recording how often one type appears after another.
  */
 type Model struct {
-	last State
-	data map[State]*NormalizingRow
+	current State
+	data    map[State]*NormalizingRow
 }
 
+/**
+ * Adds a State to the current model. The model will record a transition from
+ * its current State to the State being added.
+ */
 func (m *Model) AddState(state State) {
-	_, ok := m.data[m.last]
+	_, ok := m.data[m.current]
 	if !ok {
-		m.data[m.last] = NewNormalizingRow()
+		m.data[m.current] = NewNormalizingRow()
 	}
-	row := m.data[m.last]
+	row := m.data[m.current]
 	row.AddState(state)
-	m.last = state
+	m.current = state
 }
 
+/**
+ * Returns the size, in bytes, of the current model.
+ */
 func (m *Model) Size() uint64 {
 	var size uint64 = 0
 	for key, value := range m.data {
@@ -41,8 +53,22 @@ func (m *Model) Size() uint64 {
 	return size
 }
 
+/**
+ * Sets the current state of the model. Returns an error if the state has not
+ * been seen before and nil otherwise.
+ */
+func (m *Model) SetCurrentState(state State) error {
+	_, ok := m.data[state]
+	if !ok {
+		return errors.New(fmt.Sprintf(
+			"State %v cannot be used as a starting state.", state))
+	}
+	m.current = state
+	return nil
+}
+
 func NewModel() *Model {
-	return &Model{start, make(map[State]*NormalizingRow)}
+	return &Model{Start, make(map[State]*NormalizingRow)}
 }
 
 /**
@@ -52,12 +78,30 @@ func NewModel() *Model {
  * state and retreiving the weights associated with any given state.
  */
 type NormalizingRow struct {
-	// Holds the number of states that have been added to this row.
-	currentCount uint32
-	// Holds the counts for given state transitions.
-	rowData map[State]uint32
-	// Holds the current size of this row.
-	size uint64
+	count        uint32
+	data         map[State]uint32
+	size         uint64
+	dirty        bool
+	weightValues []float64
+	weightStates []State
+}
+
+/**
+ * Prepares this row for walking. It must be called before the row can be
+ * walked. This method populates weightValues and weightStates so that they can
+ * be used for generating next states based on a float value between 0 and 1.
+ */
+func (n *NormalizingRow) prepare() {
+	count := len(n.data)
+	n.weightValues = make([]float64, count)
+	n.weightStates = make([]State, count)
+	cutoff := float64(0)
+	for key := range n.data {
+		n.weightStates = append(n.weightStates, key)
+		cutoff += n.StateWeight(key)
+		n.weightValues = append(n.weightValues, cutoff)
+	}
+	n.dirty = false
 }
 
 /**
@@ -73,15 +117,16 @@ func (n *NormalizingRow) Size() uint64 {
  * being added. It returns the new current size of the row in bytes.
  */
 func (n *NormalizingRow) AddState(state State) uint64 {
-	value := n.rowData[state]
+	value := n.data[state]
 	// If value is 0, this state has not been seen before. Add the size of
 	// the key plus the size of its counter to the current size.
 	if value == 0 {
 		n.size += state.Size() + 4
 	}
 	value = value + 1
-	n.rowData[state] = value
-	n.currentCount++
+	n.data[state] = value
+	n.count++
+	n.dirty = true
 	return n.size
 }
 
@@ -91,11 +136,36 @@ func (n *NormalizingRow) AddState(state State) uint64 {
  * method returns 0.
  */
 func (n *NormalizingRow) StateWeight(state State) float64 {
-	value := n.rowData[state]
+	value := n.data[state]
 	if value == 0 {
 		return float64(value)
 	}
-	return float64(value) / float64(n.currentCount)
+	return float64(value) / float64(n.count)
+}
+
+/**
+ * Walks the current model given a probability between 0 and 1. Based on the
+ * sampled probability of the transition States stored in this row, this method
+ * will return a State that correlates with the passed in float. If there is an
+ * error, the State will be nil and an error will be returned.
+ */
+func (n *NormalizingRow) Walk(value float64) (State, error) {
+	if value < 0 || value > 1 {
+		return nil, errors.New(
+			"The passed in probability must be between 0 and 1")
+	}
+	if len(n.data) == 0 {
+		return nil, errors.New("Cannot walk a row with no data.")
+	}
+	if n.dirty {
+		n.prepare()
+	}
+	for index, limit := range n.weightValues {
+		if value <= limit {
+			return n.weightStates[index], nil
+		}
+	}
+	return nil, errors.New("Unexpected Walk error. No State found.")
 }
 
 /**
@@ -103,5 +173,10 @@ func (n *NormalizingRow) StateWeight(state State) float64 {
  * weight equal to 1 and a size accounting only for the weight value.
  */
 func NewNormalizingRow() *NormalizingRow {
-	return &NormalizingRow{0, make(map[State]uint32), uint64(4)}
+	return &NormalizingRow{
+		count: 0,
+		data:  make(map[State]uint32),
+		size:  uint64(4),
+		dirty: true,
+	}
 }
